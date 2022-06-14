@@ -1,0 +1,223 @@
+---
+title: "Borok_Zervaan_am11_asmIII"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Required Libraries
+```{r}
+rm(list=ls())
+graphics.off()
+# Helper packages
+library(dplyr)     # for data wrangling
+library(ggplot2)   # for awesome graphics
+library(rsample)   # for data splittingg
+library(modeldata) #package that includes couple of useful datasets
+
+# Modeling packages
+library(caret)    # for classification and regression training
+library(kernlab)  # for fitting SVMs
+```
+
+## Import Dataset
+```{r}
+data("attrition")
+# Load attrition data
+df <- attrition %>% 
+  mutate_if(is.ordered, factor, ordered = FALSE)
+head(df)
+```
+
+## Initial SVM Model with RBF Kernel
+```{r}
+# Create training (80%) and test (20%) sets
+set.seed(123)  # for reproducibility
+attrition_split <- initial_split(df, prop = 0.8, strata = "Attrition")
+#If we want to explicitly control the sampling so that our training and test 
+#sets have similar y distributions, we can use stratified sampling
+attrition_train <- training(attrition_split)
+attrition_test  <- testing(attrition_split)
+```
+
+
+```{r}
+#caret’s train() function with method = "svmRadialSigma" is used to get 
+#values of C (cost) and \sigma (related with the \gamma of Radial Basis function)
+#through cross-validation
+set.seed(1854)  # for reproducibility
+attrition_svm <- train(
+  Attrition ~ ., 
+  data = attrition_train,
+  method = "svmRadial",               
+  preProcess = c("center", "scale"),  #x's standardized (i.e.,centered around zero with a sd of one)
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10
+)
+```
+
+
+```{r}
+# Print results
+print(head(attrition_svm$results))
+attrition_svm
+```
+
+## SVM Model with Linear Kernel
+```{r}
+set.seed(1854)  # for reproducibility
+linear_attrition_svm <- train(
+  Attrition ~ ., 
+  data = attrition_train,
+  method = "svmLinear",               
+  preProcess = c("center", "scale"),  #x's standardized (i.e.,centered around zero with a sd of one)
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10,
+  tuneGrid = data.frame(C = 2)
+)
+```
+
+
+```{r}
+# Print results
+print(linear_attrition_svm$results)
+linear_attrition_svm
+```
+
+## KNN Model
+```{r}
+set.seed(1854)  # for reproducibility
+knn_fit <- train(
+  Attrition ~ ., 
+  data = attrition_train,
+  method = "knn",               
+  preProcess = c("center", "scale"),  #x's standardized (i.e.,centered around zero with a sd of one)
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10
+)
+```
+
+
+```{r}
+# Print results
+print(head(knn_fit$results))
+knn_fit
+```
+
+## SVM Model with Linear Kernel (Again)
+```{r}
+set.seed(1854)  # for reproducibility
+linear_attrition_svm <- train(
+  Attrition ~ ., 
+  data = attrition_train,
+  method = "svmLinear",               
+  preProcess = c("center", "scale"),  #x's standardized (i.e.,centered around zero with a sd of one)
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10,
+  tuneGrid = data.frame(C = 2)
+)
+
+# Print results
+print(linear_attrition_svm$results)
+linear_attrition_svm
+```
+
+## SVM Model with Polynomial Kernel
+```{r}
+set.seed(1854)  # for reproducibility
+poly_attrition_svm <- train(
+  Attrition ~ ., 
+  data = attrition_train,
+  method = "svmPoly",               
+  preProcess = c("center", "scale"),  #x's standardized (i.e.,centered around zero with a sd of one)
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 4
+)
+
+# Print results
+print(head(poly_attrition_svm$results))
+poly_attrition_svm
+```
+
+## Model Accuracies on Unseen Data
+```{r}
+predictions_svmRBF <- predict(attrition_svm, attrition_test)
+predictions_svmLinear <- predict(linear_attrition_svm, attrition_test)
+predictions_KNN <- predict(knn_fit, attrition_test)
+predictions_svmPoly <- predict(poly_attrition_svm, attrition_test)
+
+mean_poly <- mean(attrition_test$Attrition == predictions_svmPoly)
+mean_RBF <- mean(attrition_test$Attrition == predictions_svmRBF)
+mean_linear <- mean(attrition_test$Attrition == predictions_svmLinear)
+mean_KNN <- mean(attrition_test$Attrition == predictions_KNN)
+
+df_means <- as.data.frame(list(mean_poly, mean_RBF, mean_linear, mean_KNN))
+colnames(df_means) <- c("SVM Poly Accuracy", "SVM RBF Accuracy", "SVM Linear Accuracy", "KNN Accuracy")
+df_means
+```
+
+## Plotting SVM Model with RBF Kernel
+```{r}
+#Plotting the results, we see that smaller values of the cost parameter
+#( C≈ 2–8) provide better cross-validated accuracy scores for these 
+#training data:
+ggplot(attrition_svm) + theme_light()
+```
+
+## RBF Kernel SVM Model with modified class weights and ROC as evaluation metric
+```{r}
+#In caret and kernlab we can set different costs for missclassification, 
+#this is accomplished via the class.weights argument, which is just a named 
+#vector of weights for the different classes. In the employee attrition example, 
+#for instance, we might specify
+class.weights = c("No" = 1, "Yes" = 10)
+#in the call to caret::train() to make false negatives
+#(i.e., predicting “Yes” when the truth is “No”) ten times more costly than 
+#false positives (i.e., predicting “No” when the truth is “Yes”). 
+
+# Class probabilities rather than only classify:
+# Control params for SVM
+ctrl <- trainControl(
+  method = "cv", 
+  number = 10, 
+  classProbs = TRUE,                 
+  summaryFunction = twoClassSummary  # also needed for AUC/ROC
+)
+```
+
+
+```{r}
+# Tune an SVM
+set.seed(5628)  # for reproducibility
+attrition_svm_auc <- train(
+  Attrition ~ ., 
+  data = attrition_train,
+  method = "svmRadial",               
+  preProcess = c("center", "scale"),  
+  metric = "ROC",  # area under ROC curve (AUC)       
+  trControl = ctrl,
+  tuneLength = 10,
+  class.weights = c("No" = 1, "Yes" = 10)
+)
+
+# Print results
+print(head(attrition_svm_auc$results))
+attrition_svm_auc
+#Similar to before, we see that smaller values of the cost parameter  
+#C≈2−4  provide better cross-validated AUC scores on the training data
+# (column Sens) refers to the proportion of Nos correctly predicted as No 
+#and specificity (column Spec) refers to the proportion of Yess correctly predicted as Yes
+```
+
+## Confusion matrix 
+```{r}
+confusionMatrix(attrition_svm_auc)
+```
+
+## Accuracy of Modified RBF Kernel SVM Model on unseen data
+```{r}
+test_validation = predict(attrition_svm_auc, attrition_test) 
+confusionMatrix(data = test_validation, attrition_test$Attrition)
+```
